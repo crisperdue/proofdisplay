@@ -16,7 +16,8 @@ type dep_info = {
   theorem: thm;
   rule_name: string;
   args: mlobject list;
-  deps: dep_info list
+  deps: thm list;
+  step_id: int ref
 };;
 
 (* The hash table that maps from a theorem to dep_info about the
@@ -29,10 +30,17 @@ let theorem_deps =
   let info = create_dep_info refl_t "dummy" [] in
   Hashtbl.add deps (string_of_thm refl_t) info;
   Hashtbl.clear deps;
-    *)
+   *)
   deps;;
 
-(* Returns just those args that are theorems, in order. *)
+(* List of all dep_info objects *)
+let derivations = ref [];;
+
+(* Utility for finding an info having the given theorem in a list, etc. *)
+let info_has_thm th info =
+  th = info.theorem;;
+
+(* Returns the thm object of just those args that are theorems, in order. *)
 let filter_theorems (args:mlobject list) =
   itlist (fun arg results ->
            match arg with
@@ -42,38 +50,43 @@ let filter_theorems (args:mlobject list) =
 
 (* Returns a dep_info indicating that no dependency information
    for the theorem was found. *)
-let no_dep_info th = {theorem = th; rule_name = "?"; args = []; deps = []};;
+let no_dep_info th = {
+      theorem = th; rule_name = "?"; args = []; deps = []; step_id = ref (-1)
+  };;
 
-(* Finds the dep_info of a theorem or (no_dep_info th) if none. *)
+(* Finds the dep_info of a theorem by looking it up in the
+   theorem_deps database; or returns (no_dep_info th) if none found. *)
 let find_dep_info th : dep_info =
-  try Hashtbl.find theorem_deps (string_of_thm th)
+  try List.find (info_has_thm th) !derivations
   with Not_found -> no_dep_info th;;
+
+(*
+  try List.find (fun info -> info.theorem == th)
+                (Hashtbl.find_all theorem_deps (string_of_thm th))
+  with Not_found ->
+    List.iter (fun info -> print_thm info.theorem; print_string "\n")
+               (Hashtbl.find_all theorem_deps (string_of_thm th));
+    no_dep_info th;;
+*)
 
 (* Create a dep_info object from the given information. *)
 let create_dep_info th name inputs : dep_info = {
     theorem = th;
     rule_name = name;
     args = inputs;
-    deps = map find_dep_info (filter_theorems inputs)
+    deps = filter_theorems inputs;
+    step_id = ref 1
 };;
-
-let find_theorem_dep_infos th =
-  try (find_dep_info th).deps with Not_found -> [];;
-
-(* Finds the theorems (proved formulas) th depends on; returns
-   an empty list if no information is available. *)
-let find_theorem_deps th =
-  let infos = find_theorem_dep_infos th in
-  map (fun info -> info.theorem) infos;;
 
 (* Use operations in this section to record information about theorems. *)
 
 (* This runs as part of the execution of wrapped inference rules. *)
 let record_derivation theorem rule_name (inputs:mlobject list) =
-  if !record_deps then
-    (let thm_string = string_of_thm theorem in
-     let info = (create_dep_info theorem rule_name inputs) in
-     Hashtbl.add theorem_deps thm_string info);
+  (if !record_deps then
+    let info = (create_dep_info theorem rule_name inputs) in
+      derivations := info :: !derivations;
+      let thm_string = string_of_thm theorem in
+        Hashtbl.add theorem_deps thm_string info);
   theorem;;
 
 let pair_record_derivation ((thm1, thm2) as theorems)
@@ -395,7 +408,7 @@ let rec record_theorem_name1 (theorem_name,vd) =
 let record_theorems() =
   let env = Obj.magic !Toploop.toplevel_env in
   do_ocaml_table (fun (name, (_, vd)) ->
-                      print_string ("Theorem " ^ name ^ "\n");
+                      (* print_string ("Theorem " ^ name ^ "\n"); *)
                       record_theorem_name1(name,vd))
                   env.values;;
 
@@ -413,45 +426,98 @@ let find_index elt elts =
          | [] ->  -1 in
   finder 0 (hd elts) (tl elts);;
   
+(* Returns a list of key/value pairs for all bindings of all keys
+   in the theorem_deps hash table. *)
+let all_deps() =
+  let add_binding key value results =
+    (key, value) :: results in
+  Hashtbl.fold add_binding theorem_deps [];;
 
-let print_rule_info thm_string (info:dep_info) = 
-  if length info.args > 0 then
-    (print_string thm_string;
-     print_string "  by ";
-     print_string info.rule_name; 
-     print_string " args = ";
-     print_int (length info.args);
-     print_string "\n");;
+(* Dump out information of a dep_info. *)
+let print_rule_info (info:dep_info) = 
+  let thm_string = (string_of_thm info.theorem) in
+  let thm_name =
+     try Hashtbl.find theorem_names thm_string with Not_found -> "" in
+  let print_from th =
+    (print_string "\n  from ";
+     print_qterm (concl th)) in
+  print_string thm_string;
+  if String.length thm_name > 0 then
+    (print_string " ("; print_string thm_name; print_string ")");
+  print_string "  by ";
+  print_string info.rule_name; 
+  print_string " args = ";
+  print_int (length info.args);
+  List.iter print_from info.deps;
+  print_string "\n";;
+
+(* Assigns step numbers (step_id) to each info in the given list,
+   starting at 1. *)
+let number_steps steps =
+  let rec renumber steps n =
+    match steps with
+    | head :: tail -> head.step_id := n; renumber tail (n + 1)
+    | [] -> () in
+  renumber steps 1;;
 
 let linear_proof theorem =
   let all_steps = ref [no_dep_info (REFL `T`)] in
   all_steps := [];
   let rec linearize th =
-    try ignore (List.find (fun step -> th == step.theorem) !all_steps)
+    try ignore (List.find (info_has_thm th) !all_steps)
     with Not_found ->
       all_steps := (find_dep_info th) :: !all_steps;
-      List.iter linearize (find_theorem_deps th) in
+      List.iter linearize (find_dep_info th).deps in
   linearize theorem;
+  number_steps !all_steps;
   !all_steps;;
 
+(* Print a list of inference rule arguments, mlobjects. *)
+let print_rule_args args =
+  let print_arg arg =
+    match arg with
+    | Mterm tm -> print_string (string_of_term tm)
+    | Mthm th ->
+      let number = !((find_dep_info th).step_id) in
+      if number >= 0
+      then print_int number
+      else print_string ("\n  `" ^ (string_of_thm th) ^ "`")
+    | _ -> print_string "..." in
+  print_seplist print_arg ", " args;;
+
 let print_step info =
-  print_string (string_of_thm info.theorem);
-  print_string " by ";
-  print_string info.rule_name;
+  let thm_string = (string_of_thm info.theorem) in
+  let thm_name =
+     try Hashtbl.find theorem_names thm_string with Not_found -> "" in
+  print_int !(info.step_id);
+  print_string " ";
+  print_string thm_string;
+  (if String.length thm_name > 0 then
+     (print_string " ("; print_string thm_name; print_string ")")
+   else
+     (print_string " by ";
+      print_string info.rule_name)
+  );
+  if length info.args > 0 then
+    (print_string " of ";
+     print_rule_args info.args);
   print_string "\n";;
 
 let print_linear_proof theorem =
   let proof = linear_proof theorem in
-  let index = ref 1 in
-  List.iter (fun stp ->
-              print_int !index;
-              index := !index + 1;
-              print_string " ";
-              print_step stp)
-            proof;;
+  List.iter print_step proof;;
 
-let ppp () =
-  print_linear_proof (top_thm());
+(* Print all steps in the derivations database as if they were a proof.
+   Prints them out reversed so the steps first created come first. *)
+let print_derivations () =
+  let steps = List.rev !derivations in
+  number_steps steps;
+  List.iter print_step steps;;
+
+(* Convenience functions *)
+
+(* Typical usage is ppp top_thm.  Here top_thm is not yet defined. *)
+let ppp f = print_linear_proof (f());;
 
 
 (* Actually wrap rules now. *)
