@@ -70,10 +70,13 @@ let linear_proof theorem =
 let print_rule_args args =
   let print_arg arg =
     match arg with
-    | Mterm tm -> printf "%s" (string_of_term tm)
+    | Mterm tm -> printf "`%s`" (string_of_term tm)
     | Mthm th ->
+      let name = theorem_name th in
       let number = !((find_dep_info th).step_id) in
-      if number >= 0
+      if String.length name > 0
+      then printf "%s" name
+      else if number >= 0
       then printf "%d" number
       else printf "\n `%s`" (string_of_thm th)
     | _ -> printf "..." in
@@ -83,15 +86,15 @@ let print_rule_args args =
 let print_step info =
   let thm_string = (string_of_thm info.theorem) in
   let thm_name = theorem_name info.theorem in
-  printf "%d %s" !(info.step_id) thm_string;
   (if String.length thm_name > 0 then
-     printf " (%s)" thm_name
+     printf "%d (%s)" !(info.step_id) thm_name
    else
-     printf " by %s" info.rule_name
+     printf "%d %s" !(info.step_id) info.rule_name
   );
   if length info.args > 0 then
     (printf " of ";
      print_rule_args info.args);
+  printf ":\n%s" thm_string;
   printf "\n";;
 
 let print_linear_proof theorem =
@@ -99,9 +102,9 @@ let print_linear_proof theorem =
   List.iter print_step proof;;
 
 (* Print all steps in the derivations database as if they were a proof.
-   Prints them out reversed so the steps first created come first. *)
+   The derivations list should be reversed before calling this. *)
 let print_derivations () =
-  let steps = List.rev !derivations in
+  let steps = !derivations in
   number_steps steps;
   List.iter print_step steps;;
 
@@ -109,5 +112,3 @@ let print_derivations () =
 
 (* Typical usage is ppp top_thm.  Here top_thm is not yet defined. *)
 let ppp f = print_linear_proof (f());;
-
-

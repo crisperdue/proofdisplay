@@ -38,7 +38,7 @@ let derivations = ref [];;
 
 (* Utility for finding an info having the given theorem in a list, etc. *)
 let info_has_thm th info =
-  th = info.theorem;;
+  th == info.theorem;;
 
 (* Returns the thm object of just those args that are theorems, in order. *)
 let filter_theorems (args:mlobject list) =
@@ -78,7 +78,9 @@ let create_dep_info th name inputs : dep_info = {
     step_id = ref 1
 };;
 
-(* Use operations in this section to record information about theorems. *)
+
+
+(* Operations that record information about theorems. *)
 
 (* This runs as part of the execution of wrapped inference rules. *)
 let record_derivation theorem rule_name (inputs:mlobject list) =
@@ -101,12 +103,7 @@ let list_record_derivation (theorems:thm list)
   theorems;;
 
 
-(* Wrapper functions *)
-
-(*
-let thmpair_wrapper (name:string) ((th1:thm),(th2:thm)) : thm * thm =
-  record_derivation 
-*)
+(* Wrapper functions.  *)
 
 let conv_wrapper name (rule:term->thm) (arg:term) : thm =
   record_derivation (rule arg) name [Mterm arg];;
@@ -172,7 +169,7 @@ let typeinst_rule_wrapper name (rule:(hol_type*hol_type)list->thm->thm)
   let ml_inst = tyinst_to_mlobject tytheta in
   record_derivation (rule tytheta th) name [ml_inst; Mthm th];;
 
-(*
+(* TODO:
 
 let instantation_rule_wrapper name (rule:instantiation->thm->thm)
 let thmlist_rule_wrapper name (rule:thm list->thm->thm) ths (th:thm) : thm =
@@ -334,14 +331,16 @@ let wrapper_name absty =
 
 (* Installing the wrapper functions *)
 
+(* Returns a command string that defines the given name as a wrapper
+   that will call the current binding of the (prefixed) name. *)
 let rec wrapper_command pfx (name,vd) =
   let pname = pfx ^ name in
   let wrap = (wrapper_name o normalise_abstype o abstract_typeexpr)
                  vd.val_type in
   match wrap with
-    Some wrapfn
-       -> Some ("let " ^ name ^ " = " ^
-                    wrapfn ^ " \"" ^ pname ^ "\" " ^ pname ^ ";;")
+    Some wrapper_name
+    -> Some (Printf.sprintf "let %s = %s \"%s\" %s;;"
+               name wrapper_name pname pname)
   | _  -> None;;
 
 
