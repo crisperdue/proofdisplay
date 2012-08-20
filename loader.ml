@@ -11,10 +11,19 @@
    versions. *)
 #use "../proofdisplay/rule_wrappers.ml";;
 
+(* Load support for accessing theorem names *)
+#use "../proofdisplay/theorem_names.ml";;
+
 (* Load the proof presentation code. This could be done later, as nothing
    depends on it. *)
 #use "../proofdisplay/proof_display.ml";;
 
 (* Load the rest of hol.ml. *)
 hol2();;
+
+(* Repeat this at any time to get the latest info about theorems. *)
+record_theorems();;
+
+(* Turn on recording of inference steps. *)
+record_deps := true;
 

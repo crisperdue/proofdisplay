@@ -1,4 +1,6 @@
-(* More utilities *)
+open Printf;;
+
+(* Utility functions *)
 
 (* Returns the first index where elt occurs in elts, starting from 0,j
    or else -1 if not found. *)
@@ -11,6 +13,12 @@ let find_index elt elts =
          | [] ->  -1 in
   finder 0 (hd elts) (tl elts);;
   
+let printf_seplist p sep xs =
+  if (xs = [])
+    then ()
+    else (p (hd xs);
+          do_list (fun x -> printf "%s" sep; p x) (tl xs));;
+
 (* Returns a list of key/value pairs for all bindings of all keys
    in the theorem_deps hash table. *)
 let all_deps() =
@@ -18,11 +26,12 @@ let all_deps() =
     (key, value) :: results in
   Hashtbl.fold add_binding theorem_deps [];;
 
-(* Dump out information of a dep_info. *)
+(* Printing *)
+
+(* Lower-level dump of a dep_info. *)
 let print_rule_info (info:dep_info) = 
   let thm_string = (string_of_thm info.theorem) in
-  let thm_name =
-     try Hashtbl.find theorem_names thm_string with Not_found -> "" in
+  let thm_name = theorem_name info.theorem in
   let print_from th =
     (print_string "\n  from ";
      print_qterm (concl th)) in
@@ -61,32 +70,29 @@ let linear_proof theorem =
 let print_rule_args args =
   let print_arg arg =
     match arg with
-    | Mterm tm -> print_string (string_of_term tm)
+    | Mterm tm -> printf "%s" (string_of_term tm)
     | Mthm th ->
       let number = !((find_dep_info th).step_id) in
       if number >= 0
-      then print_int number
-      else print_string ("\n  `" ^ (string_of_thm th) ^ "`")
-    | _ -> print_string "..." in
-  print_seplist print_arg ", " args;;
+      then printf "%d" number
+      else printf "\n `%s`" (string_of_thm th)
+    | _ -> printf "..." in
+  printf_seplist print_arg ", " args;;
 
+(* Print a single dep_info as a proof step. *)
 let print_step info =
   let thm_string = (string_of_thm info.theorem) in
-  let thm_name =
-     try Hashtbl.find theorem_names thm_string with Not_found -> "" in
-  print_int !(info.step_id);
-  print_string " ";
-  print_string thm_string;
+  let thm_name = theorem_name info.theorem in
+  printf "%d %s" !(info.step_id) thm_string;
   (if String.length thm_name > 0 then
-     (print_string " ("; print_string thm_name; print_string ")")
+     printf " (%s)" thm_name
    else
-     (print_string " by ";
-      print_string info.rule_name)
+     printf " by %s" info.rule_name
   );
   if length info.args > 0 then
-    (print_string " of ";
+    (printf " of ";
      print_rule_args info.args);
-  print_string "\n";;
+  printf "\n";;
 
 let print_linear_proof theorem =
   let proof = linear_proof theorem in
