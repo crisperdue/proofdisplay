@@ -22,7 +22,7 @@
 hol2();;
 
 (* Repeat this at any time to get the latest info about theorems. *)
-record_theorems();;
+record_names();;
 
 (* Turn on recording of inference steps. *)
 record_deps := true;

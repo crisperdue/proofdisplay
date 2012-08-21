@@ -45,3 +45,40 @@ let record_theorems() =
                   env.values;;
 
 
+(* Conversions *)
+
+let conv_to_name = ref ([] : ((term->thm) * string) list);;
+(*  (Hashtbl.create 1000 : (term->thm, string) Hashtbl.t);; *)
+
+let conv_name (conv : term->thm) =
+  try (* Hashtbl.find conv_to_name conv *) List.assq conv !conv_to_name
+  with Not_found -> "";;
+
+let record_conv_name conv name =
+  (* Hashtbl.replace conv_to_name conv name;; *)
+  conv_to_name := (conv, name) :: !conv_to_name;;
+
+let rec record_conv_name1 (conv_name,vd) =
+  let absty = (normalise_abstype o abstract_typeexpr) vd.val_type in
+  match absty with
+  | Aconv  ->
+      (let command = (Printf.sprintf "record_conv_name %s \"%s\";;"
+                        conv_name conv_name) in
+       try (exec command)
+       with Invalid_argument _ -> Printf.printf "Invalid argument: %s" command)
+  | _ -> ();;
+
+(* Call this to update the conversion-to-name mappings to reflect
+   current top-level variable bindings. *)
+let record_convs() =
+  let env = Obj.magic !Toploop.toplevel_env in
+  do_ocaml_table (fun (name, (_, vd)) ->
+                      record_conv_name1(name,vd))
+                  env.values;;
+
+
+(* Overall driver function *)
+
+let record_names() =
+  record_theorems();
+  record_convs()
