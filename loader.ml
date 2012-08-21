@@ -26,4 +26,3 @@ record_theorems();;
 
 (* Turn on recording of inference steps. *)
 record_deps := true;
-

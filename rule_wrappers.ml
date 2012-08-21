@@ -103,7 +103,10 @@ let list_record_derivation (theorems:thm list)
   theorems;;
 
 
-(* Wrapper functions.  *)
+(* Wrapper functions.  These are called with the first two arguments
+   at rule wrapping time.  During execution of a proof the function
+   will be called with the remaining arguments, causing it to run the
+   wrapped rule, recording arguments and the result. *)
 
 let conv_wrapper name (rule:term->thm) (arg:term) : thm =
   record_derivation (rule arg) name [Mterm arg];;
@@ -151,15 +154,6 @@ let termlist_rule_wrapper name (rule:term list->thm->thm) tms (th:thm) : thm =
                     [Mlist (map (fun tm -> Mterm tm) tms); Mthm th];;
 
 (* From wrappers.ml *)
-let inst_to_mlobject theta =
-  Mlist (map (fun (tm1,tm2) -> Mtuple [Mterm tm1; Mterm tm2])
-              theta);;
-
-let terminst_rule_wrapper name (rule:(term*term)list->thm->thm)
-                            theta (th:thm) : thm =
-  record_derivation (rule theta th) name [inst_to_mlobject theta; Mthm th];;
-
-(* From wrappers.ml *)
 let tyinst_to_mlobject tytheta =
   Mlist (map (fun (ty1,ty2) -> Mtuple [Mtype ty1; Mtype ty2])
              tytheta);;
@@ -169,16 +163,52 @@ let typeinst_rule_wrapper name (rule:(hol_type*hol_type)list->thm->thm)
   let ml_inst = tyinst_to_mlobject tytheta in
   record_derivation (rule tytheta th) name [ml_inst; Mthm th];;
 
+let inst_to_mlobject theta =
+  Mlist (map (fun (tm1,tm2) -> Mtuple [Mterm tm1; Mterm tm2])
+              theta);;
+
+let terminst_rule_wrapper name (rule:(term*term)list->thm->thm)
+                          theta (th:thm) : thm =
+  record_derivation (rule theta th) name [inst_to_mlobject theta; Mthm th];;
+
+let instantiation_to_mlobject (inst:instantiation) =
+  let (ntms,theta,tytheta) = inst in
+  let ntms' = Mlist (map (fun (n,tm) -> Mtuple [Mint n; Mterm tm]) ntms) in
+  let theta' = inst_to_mlobject theta in
+  let tytheta' = tyinst_to_mlobject tytheta in
+  Mtuple [ntms';theta';tytheta'];;
+
+let instantiation_rule_wrapper name (rule:instantiation->thm->thm)
+                               theta (th:thm) : thm =
+  record_derivation (rule theta th) name
+    [instantiation_to_mlobject theta; Mthm th];;
+
+let thmlist_rule_wrapper name (rule:thm list->thm->thm) ths (th:thm) : thm =
+  record_derivation (rule ths th) name
+    [mk_thlist ths; Mthm th];;
+
+let pairrule_wrapper name (rule:thm->thm*thm) (th:thm) : thm * thm =
+  let pair = rule th in
+  let mthm = Mthm th in
+  ignore (record_derivation (fst pair) name [mthm]);
+  ignore (record_derivation (snd pair) name [mthm]);
+  pair;;
+
+let multirule_wrapper name (rule:thm->thm list) (th:thm) : thm list =
+  let result = rule th in
+  let args = [Mthm th] in
+  let record result = ignore (record_derivation result name args) in
+  List.iter record result;
+  result;;
+
+let conv_conv_wrapper name (mc:conv->conv) (c:conv) (tm:term) : thm =
+
+
 (* TODO:
 
-let instantation_rule_wrapper name (rule:instantiation->thm->thm)
-let thmlist_rule_wrapper name (rule:thm list->thm->thm) ths (th:thm) : thm =
-let pairrule_wrapper name (rule:thm->thm*thm) (th:thm) : thm * thm =
-let multirule_wrapper name (rule:thm->thm list) (th:thm) : thm list =
-let conv_conv_wrapper name (mc:conv->conv) (xc:xconv) (tm:term) : thm =
 let stringconv_conv_wrapper name (mc:string->conv->conv)
-let conv_rule_wrapper name (mr:conv->thm->thm) (xc:xconv) (th:thm) : thm =
-let bconv_conv_wrapper name (mc:conv->conv->conv) (xc1:term->thm) (xc2:term->thm)
+let conv_rule_wrapper name (mr:conv->thm->thm) (c:conv) (th:thm) : thm =
+let bconv_conv_wrapper name (mc:conv->conv->conv) (c1:term->thm) (c2:term->thm)
 let mconvthmlist_conv_wrapper name
 let mconvthmlist_rule_wrapper name
 
@@ -275,15 +305,15 @@ let wrapper_name absty =
        -> Some "terminst_rule_wrapper"
   | Aarrow[Alist(Atuple[Atype;Atype]);Athm;Athm]
        -> Some "typeinst_rule_wrapper"
-(*
   | Aarrow[Aname"instantiation";Athm;Athm]
-       -> Some "instantation_rule_wrapper"
+       -> Some "instantiation_rule_wrapper"
   | Aarrow[Alist(Athm);Athm;Athm]
        -> Some "thmlist_rule_wrapper"
   | Aarrow[Athm;Atuple[Athm;Athm]]
        -> Some "pairrule_wrapper"
   | Aarrow[Athm;Alist(Athm)]
        -> Some "multirule_wrapper"
+(*
   | Aarrow[Aconv;Athm;Athm]
        -> Some "conv_rule_wrapper"
   | Aarrow[Aconv;Aconv]
