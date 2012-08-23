@@ -11,6 +11,9 @@
    versions. *)
 #use "../proofdisplay/rule_wrappers.ml";;
 
+(* Wrap the primitive inference rules. *)
+wrap_rules();;
+
 (* Load support for accessing theorem names *)
 #use "../proofdisplay/theorem_names.ml";;
 
@@ -18,8 +21,13 @@
    depends on it. *)
 #use "../proofdisplay/proof_display.ml";;
 
-(* Load the rest of hol.ml. *)
+(* Load more of hol.ml. *)
 hol2();;
+
+(* Wrap the more advanced inference rules. *)
+wrap_rules();;
+
+hol3();;
 
 (* Repeat this at any time to get the latest info about theorems. *)
 record_names();;

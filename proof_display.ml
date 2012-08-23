@@ -54,31 +54,44 @@ let number_steps steps =
     | [] -> () in
   renumber steps 1;;
 
+let rec trace_used_steps theorem =
+  let info = find_derivation theorem in
+  if !(info.step_id) > 0
+  then ()
+  else (info.step_id := 1; List.iter trace_used_steps info.deps);;
+
 let linear_proof theorem =
-  let all_steps = ref [no_dep_info (REFL `T`)] in
-  all_steps := [];
-  let rec linearize th =
-    try ignore (List.find (info_has_thm th) !all_steps)
-    with Not_found ->
-      all_steps := (find_dep_info th) :: !all_steps;
-      List.iter linearize (find_dep_info th).deps in
-  linearize theorem;
-  number_steps !all_steps;
-  !all_steps;;
+  List.iter (fun step -> step.step_id := 0) !derivations;
+  trace_used_steps theorem;
+  let step_needed info = !(info.step_id) > 0 in
+  let steps = rev (List.filter step_needed !derivations) in
+  let counter = ref 1 in
+  (List.iter (fun info -> info.step_id := !counter; counter := !counter + 1)
+     steps;
+   steps);;
 
 (* Print a list of inference rule arguments, mlobjects. *)
 let print_rule_args args =
-  let print_arg arg =
+  let rec print_arg arg =
     match arg with
+    | Mname name -> printf "%s" name
+    | Mstring str -> printf "%S" str
     | Mterm tm -> printf "`%s`" (string_of_term tm)
     | Mthm th ->
       let name = theorem_name th in
-      let number = !((find_dep_info th).step_id) in
+      let number = !((find_derivation th).step_id) in
       if String.length name > 0
       then printf "%s" name
-      else if number >= 0
+      else if number > 0
       then printf "%d" number
       else printf "\n `%s`" (string_of_thm th)
+    | Mconv cv ->
+      let name = conv_name cv in
+      printf "%s" (if name = "" then "<conv>" else name)
+    | Mtuple items ->
+      printf_seplist print_arg ", " items
+    | Mlist items ->
+      printf_seplist print_arg ", " items
     | _ -> printf "..." in
   printf_seplist print_arg ", " args;;
 

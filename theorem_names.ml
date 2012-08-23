@@ -81,4 +81,4 @@ let record_convs() =
 
 let record_names() =
   record_theorems();
-  record_convs()
+  record_convs();;

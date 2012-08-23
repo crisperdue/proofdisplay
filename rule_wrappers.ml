@@ -1,7 +1,29 @@
+(* Define some HOL Light types here so this code can be loaded
+   before most of the HOL system itself.
+*)
+type conv = term->thm;;
+type label = int;;
+type instantiation =
+  (int * term) list * (term * term) list * (hol_type * hol_type) list;;
 
+
+(* Utilities this code needs *)
 #use "Tactician/lib.ml";;
 #use "Tactician/mlobject.ml";;
 #use "Tactician/mltype.ml";;
+
+(* Retain handles to all the original unwrapped primitive inference
+   functions. *)
+let REFL_orig = REFL;;
+let TRANS_orig = TRANS;;
+let MK_COMB_orig = MK_COMB;;
+let ABS_orig = ABS;;
+let BETA_orig = BETA;;
+let ASSUME_orig = ASSUME;;
+let EQ_MP_orig = EQ_MP;;
+let DEDUCT_ANTISYM_RULE_orig = DEDUCT_ANTISYM_RULE;;
+let INST_TYPE_orig = INST_TYPE;;
+let INST_orig = INST;;
 
 
 (* THEOREM DEPENDENCY RECORDING *)
@@ -26,8 +48,7 @@ let theorem_deps =
   let deps = Hashtbl.create 1000 in
   (* This code would set the exact type of theorem_deps, but results
      in a circular dependency, so we let execution fix the types later.
-  let refl_t = REFL `T` in
-  let info = create_dep_info refl_t "dummy" [] in
+  let info = create_dep_info TRUTH "dummy" [] in
   Hashtbl.add deps (string_of_thm refl_t) info;
   Hashtbl.clear deps;
    *)
@@ -36,46 +57,54 @@ let theorem_deps =
 (* List of all dep_info objects *)
 let derivations = ref [];;
 
-(* Utility for finding an info having the given theorem in a list, etc. *)
-let info_has_thm th info =
+(* Tests whether an info has the given theorem. *)
+let thm_has_derivation th info =
   th == info.theorem;;
 
-(* Returns the thm object of just those args that are theorems, in order. *)
-let filter_theorems (args:mlobject list) =
-  itlist (fun arg results ->
-           match arg with
-           | Mthm th -> th :: results
-           | _ -> results)
-         args [];;
-
-(* Returns a dep_info indicating that no dependency information
-   for the theorem was found. *)
-let no_dep_info th = {
-      theorem = th; rule_name = "?"; args = []; deps = []; step_id = ref (-1)
-  };;
+let primitive_rules = [
+  "REFL"; "TRANS"; "MK_COMB"; "ABS"; "BETA"; "ASSUME"; "EQ_MP";
+  "DEDUCT_ANTISYM_RULE"; "INST_TYPE"; "INST"
+];;
 
 (* Finds the dep_info of a theorem by looking it up in the
-   theorem_deps database; or returns (no_dep_info th) if none found. *)
-let find_dep_info th : dep_info =
-  try List.find (info_has_thm th) !derivations
-  with Not_found -> no_dep_info th;;
-
-(*
-  try List.find (fun info -> info.theorem == th)
-                (Hashtbl.find_all theorem_deps (string_of_thm th))
-  with Not_found ->
-    List.iter (fun info -> print_thm info.theorem; print_string "\n")
-               (Hashtbl.find_all theorem_deps (string_of_thm th));
-    no_dep_info th;;
+   theorem_deps database; or returns (no_dep_info th) if none found.
+   Finds the oldest derivation as an aid to skipping of no-op steps
+   such as instantiations that do nothing.
 *)
+let find_derivation th : dep_info =
+  let high_level derivation =
+    not (List.mem derivation.rule_name primitive_rules) in
+  let derivs = List.find_all (thm_has_derivation th) !derivations in
+  (* We prefer to present a high-level derivation where possible. *)
+  (* Sometimes it might be a no-op (e.g. instantiation) and in that
+     case use a low-level derivation. *)
+  let high_derivs = List.find_all high_level derivs in
+  if (high_derivs != [] &&
+      (let high = last high_derivs in not (List.memq high.theorem high.deps)))
+  then last high_derivs
+  else (try last derivs with Failure _ -> {
+    theorem = th; rule_name = "?"; args = []; deps = []; step_id = ref 0
+  });;
+
+(* Scans the args recursively for theorems, returning a list of them. *)
+let input_theorems (args:mlobject list) =
+  let rec add_theorems arg results =
+    itlist (fun arg1 results1 ->
+            match arg1 with
+            | Mthm th -> th :: results1
+            | Mtuple items -> add_theorems items results1
+            | Mlist items -> add_theorems items results1
+            | _ -> results1)
+      arg results in
+  add_theorems args [];;
 
 (* Create a dep_info object from the given information. *)
 let create_dep_info th name inputs : dep_info = {
     theorem = th;
     rule_name = name;
     args = inputs;
-    deps = filter_theorems inputs;
-    step_id = ref 1
+    deps = input_theorems inputs;
+    step_id = ref (-1)
 };;
 
 
@@ -202,15 +231,36 @@ let multirule_wrapper name (rule:thm->thm list) (th:thm) : thm list =
   result;;
 
 let conv_conv_wrapper name (mc:conv->conv) (c:conv) (tm:term) : thm =
+  record_derivation (mc c tm) name [Mconv c; Mterm tm];;
 
+let stringconv_conv_wrapper name (mc:string->conv->conv)
+                            (s:string) (c:conv) (tm:term) : thm =
+  record_derivation (mc s c tm) name [Mstring s; Mconv c; Mterm tm];;
+  
+let conv_rule_wrapper name (mr:conv->thm->thm) (c:conv) (th:thm) : thm =
+  record_derivation (mr c th) name [Mconv c; Mthm th];;
+
+let bconv_conv_wrapper name (mc:conv->conv->conv) (c1:term->thm) (c2:term->thm)
+                       (tm:term) : thm =
+  record_derivation (mc c1 c2 tm) name [Mconv c1; Mconv c2; Mterm tm];;
 
 (* TODO:
 
-let stringconv_conv_wrapper name (mc:string->conv->conv)
-let conv_rule_wrapper name (mr:conv->thm->thm) (c:conv) (th:thm) : thm =
-let bconv_conv_wrapper name (mc:conv->conv->conv) (c1:term->thm) (c2:term->thm)
 let mconvthmlist_conv_wrapper name
+       (mmconv:(conv->conv)->(thm)list->conv)
+       (mc:conv->conv) (ths:(thm)list) (tm:term) : thm =
 let mconvthmlist_rule_wrapper name
+       (mmconv:(conv->conv)->(thm)list->thm->thm)
+       (mc:conv->conv) (ths:(thm)list) (th:thm) : thm =
+
+YIKES:
+let bmeta_srule_wrap0 (x,args0)
+                     (create_argobj1:'a->mlobject) (create_argobj2:'b->mlobject)
+          (mr:('a->thm)->('b->thm)->thm)
+          (xr1:'a->xthm) (xr2:'b->xthm) : xthm =
+let metasrule_rule_wrap0 (x,args,i)
+                     (create_argobj1:'b->mlobject) (create_argobj2:'b->mlobject)
+  (mmr:(('a->thm)->'b->thm)->thm) (xmr:('a->xthm)->'b->xthm) : xthm =
 
 *)
 
@@ -243,7 +293,8 @@ exec
      summary: dummy};;");;
 
 
-(* Generic operations on recent OCaml table entries *)
+(* Generic operations on recent OCaml table entries, cut and pasted
+   from Tactician/autopromote.ml. *)
 
 let lastStamp = ref 0;;
 let currentStamp = ref 0;;
@@ -272,9 +323,11 @@ let htable_elems t = htable_elems0 t [];;
 let rec ocaml_table_find (x:string) (t:('a)tbl) : 'a =
   assoc x (htable_elems t);;
 
+(* End of copied code section. *)
 
-(* Returns the wrapper function for a given abstract type *)
 
+(* Returns the name of a function of suitable type to wrap functions of
+   the given abstract type. *)
 let wrapper_name absty =
   match absty with
   | Aconv
@@ -313,6 +366,10 @@ let wrapper_name absty =
        -> Some "pairrule_wrapper"
   | Aarrow[Athm;Alist(Athm)]
        -> Some "multirule_wrapper"
+(* These wrappers seem to work OK, but unfortunately a lot of the conversions
+   I find passed in as arguments do not have top-level name bindings and
+   it is not clear how to present these kinds of steps in a readable way.
+*)
 (*
   | Aarrow[Aconv;Athm;Athm]
        -> Some "conv_rule_wrapper"
@@ -323,10 +380,15 @@ let wrapper_name absty =
   | Aarrow[Aconv;Aconv;Aconv]
        -> Some "bconv_conv_wrapper"
   | Aarrow [Aarrow[Aconv;Aconv];Alist(Athm);Aconv]
-       -> Some "mconvthmlist_conv_wrapper"
+      -> (Printf.printf "Unsupported: %s\n" "mconvthmlist_conv_wrapper"; None)
+*)
+(*       -> Some "mconvthmlist_conv_wrapper" *)
   | Aarrow [Aarrow[Aconv;Aconv];Alist(Athm);Athm;Athm]
-       -> Some "mconvthmlist_rule_wrapper"
+      -> (Printf.printf "Unsupported: %s\n" "mconvthmlist_rule_wrapper"; None)
+(*       -> Some "mconvthmlist_rule_wrapper" *)
   (* Tactic-related wrappers *)
+(* This application does not try to wrap tactics. *)
+(*
   | Atactic
        -> Some "tactic_wrap"
   | Aarrow[Astring;Atactic]
@@ -351,15 +413,10 @@ let wrapper_name absty =
        -> Some "rule_tactic_wrap"
   | Aarrow[Aarrow[Aconv;Aconv];Alist(Athm);Atactic]
        -> Some "mconvthmlist_tactic_wrap"
-  (* Xthms *)
-  | Axthm
-       -> Some "name_xthm"
 *)
   (* Otherwise *)
   | _  -> None;;
 
-
-(* Installing the wrapper functions *)
 
 (* Returns a command string that defines the given name as a wrapper
    that will call the current binding of the (prefixed) name. *)
@@ -371,29 +428,40 @@ let rec wrapper_command pfx (name,vd) =
     Some wrapper_name
     -> Some (Printf.sprintf "let %s = %s \"%s\" %s;;"
                name wrapper_name pname pname)
-  | _  -> None;;
+  | _  ->
+      (let desc = abstract_typeexpr vd.val_type in
+      match desc with
+      | Aarrow[_;Athm] -> Printf.printf "Unwrapped rule: %s\n" name
+      | _ -> ());
+      None;;
 
-
-
-(* Back to non-stolen code now: *)
-
-
+(* Execute code to wrap extra functionality around the given name. *)
 let rec wrap_rule (name,vd) =
   match (wrapper_command "" (name,vd)) with
     Some cmd -> exec cmd
   | _        -> ();;
 
-(* Finds all theorems and inference rules defined at top level and
-   wraps them with code to record their calling if they have not
-   already been wrapped. *)
+(* Does the name end with "_orig"? *)
+let ends_with s ending =
+   let len = String.length s in
+   let ending_len = String.length ending in
+   if len > ending_len
+   then (String.sub s (len - ending_len) ending_len = ending)
+   else false;;
+
+(* Finds all theorems and inference rules defined at top level since
+   the last call to wrap_rules, and wraps them with code to record
+   their calling if they have not already been wrapped. Skips names
+   ending with _orig, so original bindings may be retained under
+   such names.
+*)
 let wrap_rules () =
   let env = Obj.magic !Toploop.toplevel_env in
   (do_ocaml_table (fun (name, (_, vd)) ->
-                     wrap_rule (name,vd))
+                     if not (ends_with name "_orig") then wrap_rule (name,vd))
                   env.values;
   lastStamp := !currentStamp);;
 
 
-(* Actually wrap rules now. *)
-
-wrap_rules();;
+(* Don't actually wrap rules now. *)
+(* wrap_rules();; *)
